@@ -6,17 +6,20 @@ import { KDV_RATE, PLANS, withKdv } from "@/lib/constants";
 // bilgilerle DOLDURULACAK (tek yer; tüm yasal sayfalar buradan beslenir).
 // configured() tüm zorunlu alanlar dolunca true döner.
 // ============================================================
+// Değerler ORTAM DEĞİŞKENİNDEN okunur; depoda kişisel/yasal veri tutulmaz.
+// Tanımlı değilse "[...]" yer tutucusu döner ve companyConfigured() false olur,
+// yani yasal sayfalar eksik bilgiyle yayına çıkmaz. Gerçek değerler .env'de.
 export const COMPANY = {
-  tradeName: "Dijital Kafe",
-  legalName: "[YASAL AD]", // şahıs işletmesi (ticaret ünvanı yok → ad soyad)
-  address: "[ADRES], Selçuklu / Konya",
-  taxOffice: "Meram",
-  taxNumber: "[VKN]", // VKN (TCKN DEĞİL — gizli)
-  mersis: "[MERSİS NO]", // şahıs — yok, gizli kalır
-  tradeRegistryNo: "[TİCARET SİCİL NO]", // şahıs — yok
-  phone: "[TELEFON]",
-  email: "info@dijitalkafe.com",
-  website: "https://dijitalkafe.com",
+  tradeName: process.env.COMPANY_TRADE_NAME ?? "Dijital Kafe",
+  legalName: process.env.COMPANY_LEGAL_NAME ?? "[YASAL AD]", // şahıs işletmesinde ad soyad
+  address: process.env.COMPANY_ADDRESS ?? "[ADRES]",
+  taxOffice: process.env.COMPANY_TAX_OFFICE ?? "[VERGİ DAİRESİ]",
+  taxNumber: process.env.COMPANY_TAX_NUMBER ?? "[VKN]", // VKN (TCKN DEĞİL)
+  mersis: process.env.COMPANY_MERSIS ?? "[MERSİS NO]", // şahıs — yok, gizli kalır
+  tradeRegistryNo: process.env.COMPANY_TRADE_REGISTRY_NO ?? "[TİCARET SİCİL NO]", // şahıs — yok
+  phone: process.env.COMPANY_PHONE ?? "[TELEFON]",
+  email: process.env.COMPANY_EMAIL ?? "info@dijitalkafe.com",
+  website: process.env.COMPANY_WEBSITE ?? "https://dijitalkafe.com",
 };
 
 export function companyConfigured(): boolean {

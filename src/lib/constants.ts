@@ -110,15 +110,22 @@ export const withKdv = (net: number) => Math.round(net * (1 + KDV_RATE));
 export const isUnlimited = (n: number) => n < 0;
 
 // --- Çok aktörlü platform ---
-// QR fiziksel ürün satışından platform payı (%10). Kalanı üreticiye.
-export const QR_PLATFORM_FEE_RATE = 0.1;
+// Oranlar iş sırrıdır; ortam değişkeninden okunur, depoda gerçek değer tutulmaz.
+// Tanımsızsa nötr varsayılan (0) kullanılır — üretimde .env doldurulmalıdır.
+const oran = (v: string | undefined, varsayilan = 0) => {
+  const n = v ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : varsayilan;
+};
+
+// QR fiziksel ürün satışından platform payı. Kalanı üreticiye.
+export const QR_PLATFORM_FEE_RATE = oran(process.env.QR_PLATFORM_FEE_RATE);
 
 // Komisyoncu kazanç modelleri (admin hesabı oluştururken seçer):
-//   one_time  → ilk paket ödemesinden BİR KEZ %70
-//   recurring → müşteri aboneliğini sürdürdükçe HER ödemeden %30
+//   one_time  → ilk paket ödemesinden BİR KEZ (oran env'de)
+//   recurring → müşteri aboneliğini sürdürdükçe HER ödemeden (oran env'de)
 export type CommissionType = "one_time" | "recurring";
-export const AFFILIATE_RATE_ONE_TIME = 0.7;
-export const AFFILIATE_RATE_RECURRING = 0.3;
+export const AFFILIATE_RATE_ONE_TIME = oran(process.env.AFFILIATE_RATE_ONE_TIME);
+export const AFFILIATE_RATE_RECURRING = oran(process.env.AFFILIATE_RATE_RECURRING);
 export const COMMISSION_RATE_BY_TYPE: Record<CommissionType, number> = {
   one_time: AFFILIATE_RATE_ONE_TIME,
   recurring: AFFILIATE_RATE_RECURRING,

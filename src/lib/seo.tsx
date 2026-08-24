@@ -16,9 +16,12 @@ import { COMPANY } from "@/lib/legal";
 
 const SITE_URL = `https://${ROOT_DOMAIN}`;
 
-// "[TELEFON]" → "+9[TELEFON]" (schema.org telephone E.164 ister)
+// "05XX XXX XX XX" → "+905XXXXXXXXX" (schema.org telephone E.164 ister)
 function toE164(phone: string): string {
   const digits = phone.replace(/\D/g, "").replace(/^0/, "");
+  // COMPANY.phone ortam değişkeninden gelir; tanımlı değilse "[TELEFON]" olur ve
+  // rakam çıkmaz. O durumda "+90" gibi bozuk bir değer yaymak yerine boş dön.
+  if (digits.length < 10) return "";
   return `+90${digits}`;
 }
 

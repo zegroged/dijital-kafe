@@ -1,4 +1,4 @@
-# Sunucu ([SUNUCU]) deploy stack'i: migrate + web + db + redis + nginx.
+# Üretim deploy stack'i: migrate + web + db + redis + nginx.
 # Çalıştır:  docker compose -f docker-compose.prod.yml up -d --build
 # Gizli değerler aynı dizindeki .env dosyasından gelir (compose otomatik okur).
 name: kafe
