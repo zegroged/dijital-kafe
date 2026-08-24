@@ -1,0 +1,645 @@
+// KAFE — QR Menü + 3D/AR SaaS
+// Prisma 7 schema. Veritabanı: PostgreSQL 16.
+// TS tarafı camelCase, veritabanı tarafı snake_case (@map / @@map ile).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Prisma 7: url schema'da DEĞİL. Migrate → prisma.config.ts, runtime → adapter.
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  owner // restoran/kafe sahibi (varsayılan)
+  admin // platform yöneticisi
+  qr_vendor // QR lazer üreticisi (sipariş paneli)
+  affiliate // komisyoncu (referans paneli)
+  affiliate_manager // komisyon yöneticisi: yalnız komisyoncu hesabı açar
+  accountant // mali müşavir: stopaj oranı + gider pusulası + vergi raporları
+  staff // çalışan/garson: restoranın adisyonlarını tutar
+}
+
+// Adisyon (masa hesabı) yaşam döngüsü.
+enum AdisyonStatus {
+  open // açık, sipariş ekleniyor
+  paid // kapatıldı/ödendi
+  cancelled // iptal
+}
+
+// Adisyon kapanış ödeme türü.
+enum PaymentMethod {
+  cash // nakit
+  card // kart
+}
+
+// Komisyoncu kazancının yaşam döngüsü.
+enum ReferralStatus {
+  pending // referansla kayıt oldu, henüz ödeme yapmadı
+  earned // ilk paket ödemesi yapıldı → komisyon hak edildi
+  paid // komisyoncuya ödendi
+  cancelled // iptal/iade
+}
+
+// Komisyoncunun kazanç modeli (admin hesabı oluştururken seçer).
+enum CommissionType {
+  one_time // tek seferlik: ilk paket ödemesinden bir kez %70
+  recurring // devam eden: müşteri aboneliğini sürdürdükçe her ödemeden %30
+}
+
+// Tek bir komisyon kazanç kaydının durumu (her ödeme bir kayıt üretir).
+enum CommissionStatus {
+  earned // hak edildi, çekilebilir bakiyede
+  requested // bir çekim talebine kilitlendi (henüz ödenmedi)
+  withdrawn // çekim talebiyle komisyoncuya ödendi
+  paid // (legacy) eski toplu "ödendi" işareti = withdrawn
+  cancelled // iptal/iade
+}
+
+// Komisyoncu çekim talebinin yaşam döngüsü.
+enum WithdrawalStatus {
+  requested // komisyoncu talep etti, admin onayı bekliyor
+  approved // admin onayladı, ödeme bekliyor
+  processing // payout sağlayıcısına gönderildi (sonuç bekleniyor)
+  paid // komisyoncuya ödendi
+  rejected // admin reddetti (komisyonlar bakiyeye döner)
+}
+
+// Komisyoncunun vergi durumu (stopaj davranışını belirler).
+enum TaxStatus {
+  individual_no_tax // vergi mükellefi değil → stopaj kesilir, NET gönderilir
+  tax_registered // vergi mükellefi → belge yükler, BRÜT gönderilir (kendi beyan eder)
+}
+
+// QR fiziksel ürün siparişinin yaşam döngüsü.
+enum QrOrderStatus {
+  pending // oluşturuldu, ödeme bekliyor
+  paid // ödendi → üretici paneline düştü
+  processing // üretici işliyor
+  shipped // kargolandı
+  delivered // teslim
+  cancelled // iptal/iade
+}
+
+enum Plan {
+  free_trial
+  basic
+  premium
+}
+
+enum SubscriptionStatus {
+  trialing
+  active
+  expired
+  cancelled
+}
+
+// Bir yemeğin 3D modelinin yaşam döngüsü.
+// AR Code entegrasyonu bu alan üzerinden yürür.
+enum ModelStatus {
+  none // 3D yok, sadece fotoğraf
+  pending // tarama/oluşturma kuyruğa alındı
+  processing // AR Code işliyor
+  ready // .glb (+ .usdz) hazır
+  failed // başarısız, tekrar denenebilir
+}
+
+// ============================================================
+// USER / PROFILE  (NextAuth Credentials ile kullanılır)
+// ============================================================
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  // Giriş kimliği: owner/admin/vendor e-posta; komisyoncu telefon (biri dolu).
+  email         String?   @unique
+  phone         String?   @unique
+  // Kullanıcı adıyla giriş (küçük harf saklanır). Yalnızca e-postası/telefonu
+  // olmayan özel hesaplar için; genel kayıt akışı bunu doldurmaz.
+  username      String?   @unique
+  passwordHash  String    @map("password_hash")
+  name          String?
+  role          UserRole  @default(owner)
+  emailVerified DateTime? @map("email_verified")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  restaurant   Restaurant?
+  subscription Subscription?
+  // Çok aktörlü platform ilişkileri (rolüne göre en fazla biri dolu olur).
+  affiliate    Affiliate? // role=affiliate ise komisyoncu profili
+  qrVendor     QrVendor? // role=qr_vendor ise üretici profili
+  referredBy   Referral? // bu kullanıcı bir referans koduyla geldiyse
+  qrOrders     QrOrder[] // bu kullanıcının (sahip) verdiği QR siparişleri
+  passwordResetTokens PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
+  staff        Staff? // role=staff ise çalışan profili (bağlı olduğu restoran)
+  chatMessages ChatMessage[] // özel sohbet (env CHAT_MEMBER_IDS ile 2 kişiye kilitli)
+
+  @@map("profiles")
+}
+
+// Şifre sıfırlama jetonu. Ham jeton e-postayla gider; DB'de yalnız SHA-256 özeti tutulur.
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") // sha256(raw)
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// E-posta doğrulama jetonu (özellikle komisyoncular). Ham jeton e-postayla gider;
+// DB'de yalnız SHA-256 özeti tutulur. Doğrulanınca User.emailVerified dolar.
+model EmailVerificationToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") // sha256(raw)
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("email_verification_tokens")
+}
+
+// ============================================================
+// RESTAURANT  (kullanıcı başına bir işletme)
+// ============================================================
+
+model Restaurant {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @unique @map("user_id") @db.Uuid
+  businessName  String   @map("business_name")
+  slug          String?  @unique // subdomain: kahvecim.to-p1.com
+  logoUrl       String?  @map("logo_url")
+  coverImageUrl String?  @map("cover_image_url")
+  phone         String?
+  address       String?
+  workingHours  Json     @default("{}") @map("working_hours")
+  socialLinks   Json     @default("{}") @map("social_links")
+  currency      String   @default("TRY") @db.VarChar(3)
+  language      String   @default("tr") @db.VarChar(5)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  menu       Menu?
+  staff      Staff[]
+  tables     RestaurantTable[]
+  adisyonlar Adisyon[]
+
+  @@map("restaurants")
+}
+
+// ============================================================
+// MENU  (restoran başına bir menü)
+// ============================================================
+
+model Menu {
+  id            String    @id @default(uuid()) @db.Uuid
+  restaurantId  String    @unique @map("restaurant_id") @db.Uuid
+  isPublished   Boolean   @default(false) @map("is_published")
+  publishedAt   DateTime? @map("published_at")
+  // theme_settings JSON şeması src/lib/theme/schema.ts içinde tanımlı.
+  themeSettings Json      @default("{}") @map("theme_settings")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  categories Category[]
+  dishes     Dish[]
+
+  @@map("menus")
+}
+
+// ============================================================
+// CATEGORY
+// ============================================================
+
+model Category {
+  id        String   @id @default(uuid()) @db.Uuid
+  menuId    String   @map("menu_id") @db.Uuid
+  name      String
+  icon      String?  @db.VarChar(16)
+  imageUrl  String?  @map("image_url") // kategori kapak görseli (public grid kartı)
+  // Kategoriye özel TAM tema (theme_settings JSON). null = menü temasını miras alır.
+  themeSettings Json? @map("theme_settings")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  menu   Menu   @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  dishes Dish[]
+
+  @@index([menuId])
+  @@map("categories")
+}
+
+// ============================================================
+// DISH
+// ============================================================
+
+model Dish {
+  id            String      @id @default(uuid()) @db.Uuid
+  menuId        String      @map("menu_id") @db.Uuid
+  categoryId    String?     @map("category_id") @db.Uuid
+  name          String
+  description   String?
+  price         Decimal     @db.Decimal(10, 2)
+  imageUrl      String?     @map("image_url")
+  thumbnailUrl  String?     @map("thumbnail_url")
+  // AI canlandırma (Nano Banana) öncesi orijinal görsel — tahribatsızlık/geri dönüş.
+  originalImageUrl String?  @map("original_image_url")
+  // --- 3D / AR (AR Code seam) ---
+  model3dUrl    String?     @map("model_3d_url") // .glb (Android Scene Viewer)
+  modelUsdzUrl  String?     @map("model_usdz_url") // .usdz (iOS Quick Look)
+  modelStatus   ModelStatus @default(none) @map("model_status")
+  arCodeAssetId String?     @map("ar_code_asset_id") // AR Code tarafındaki referans
+  // ------------------------------
+  isAvailable Boolean  @default(true) @map("is_available")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  menu     Menu      @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([menuId])
+  @@index([categoryId])
+  @@map("dishes")
+}
+
+// ============================================================
+// SUBSCRIPTION  (kullanıcı başına bir abonelik / trial)
+// ============================================================
+
+model Subscription {
+  id               String             @id @default(uuid()) @db.Uuid
+  userId           String             @unique @map("user_id") @db.Uuid
+  plan             Plan               @default(free_trial)
+  status           SubscriptionStatus @default(trialing)
+  trialEndsAt      DateTime?          @map("trial_ends_at")
+  currentPeriodEnd DateTime?          @map("current_period_end")
+  // true → dönem sonunda otomatik yenilenmez (kullanıcı iptal etti, süre sonuna
+  // kadar erişim sürer). false → otomatik yenilenir.
+  cancelAtPeriodEnd Boolean           @default(false) @map("cancel_at_period_end")
+  // 3D model kotası (AR Code'un 1.000/ay Object Capture kotasından pay).
+  model3dQuota     Int                @default(5) @map("model_3d_quota")
+  modelsUsed       Int                @default(0) @map("models_used")
+  // AI fotoğraf canlandırma (Nano Banana) aylık kotası — paketlerin ana farkı.
+  // Yuvarlanan 30 günlük döngü: aiEnhanceResetAt geçtiyse sayaç sıfırlanır.
+  aiEnhancementsUsed Int              @default(0) @map("ai_enhancements_used")
+  aiEnhanceResetAt   DateTime?        @map("ai_enhance_reset_at")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+// ============================================================
+// KOMİSYONCU (affiliate) — referans kodu + komisyon (2 tip)
+//   one_time : ilk ödemeden bir kez %70
+//   recurring: müşteri aboneliğini sürdürdükçe her ödemeden %30
+// ============================================================
+
+model Affiliate {
+  id             String         @id @default(uuid()) @db.Uuid
+  userId         String         @unique @map("user_id") @db.Uuid
+  code           String         @unique // referans kodu (örn. AHMET2026)
+  // Kazanç modeli + buna karşılık gelen oran (admin oluştururken belirler).
+  commissionType CommissionType @default(one_time) @map("commission_type")
+  commissionRate Decimal        @default(0.70) @db.Decimal(4, 3) @map("commission_rate")
+  payoutInfo     Json           @default("{}") @map("payout_info") // IBAN/ad vb.
+  // Vergi durumu + (mükellefse) yüklediği belge → stopaj davranışını belirler.
+  taxStatus      TaxStatus      @default(individual_no_tax) @map("tax_status")
+  taxDocUrl      String?        @map("tax_doc_url")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referrals   Referral[]
+  commissions Commission[]
+  withdrawals WithdrawalRequest[]
+
+  @@map("affiliates")
+}
+
+// Bir referans kaydı: hangi komisyoncu, hangi müşteriyi getirdi (ilişki kaydı).
+// Para kazanç(lar)ı Commission tablosunda tutulur (recurring'de birden çok olabilir).
+model Referral {
+  id             String         @id @default(uuid()) @db.Uuid
+  affiliateId    String         @map("affiliate_id") @db.Uuid
+  // Referans koduyla kayıt olan kullanıcı (sahip). Kullanıcı başına tek referans.
+  referredUserId String         @unique @map("referred_user_id") @db.Uuid
+  plan           Plan? // ilk alınan paket (ilk ödemede dolar)
+  amount         Decimal?       @db.Decimal(10, 2) // legacy: ilk kazanç (Commission'a taşındı)
+  status         ReferralStatus @default(pending) // pending → earned (en az bir ödeme yaptı)
+  earnedAt       DateTime?      @map("earned_at")
+  paidAt         DateTime?      @map("paid_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  affiliate    Affiliate    @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  referredUser User         @relation(fields: [referredUserId], references: [id], onDelete: Cascade)
+  commissions  Commission[]
+
+  @@index([affiliateId])
+  @@map("referrals")
+}
+
+// Tek bir komisyon kazancı. one_time → referans başına 1 kayıt; recurring →
+// müşterinin her ödemesinde 1 kayıt (abonelik bitince yeni ödeme olmaz → durur).
+model Commission {
+  id          String           @id @default(uuid()) @db.Uuid
+  affiliateId String           @map("affiliate_id") @db.Uuid
+  referralId  String           @map("referral_id") @db.Uuid
+  plan        Plan
+  amount      Decimal          @db.Decimal(10, 2) // bu ödemeden komisyoncu payı
+  status      CommissionStatus @default(earned)
+  paymentRef  String?          @map("payment_ref") // idempotensi için ödeme referansı
+  earnedAt    DateTime         @default(now()) @map("earned_at")
+  paidAt      DateTime?        @map("paid_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  affiliate      Affiliate       @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  referral       Referral        @relation(fields: [referralId], references: [id], onDelete: Cascade)
+  withdrawalItem WithdrawalItem?
+
+  @@index([affiliateId])
+  @@index([referralId])
+  @@map("commissions")
+}
+
+// ============================================================
+// ÇEKİM (withdrawal) — komisyoncu bakiyesini çeker; stopaj + payout seam
+//   Bakiye ayrı tabloda DEĞİL: Commission(status) tek doğru kaynak.
+//     earned = çekilebilir · requested = talebe kilitli · withdrawn = ödendi
+// ============================================================
+
+model WithdrawalRequest {
+  id                String           @id @default(uuid()) @db.Uuid
+  affiliateId       String           @map("affiliate_id") @db.Uuid
+  status            WithdrawalStatus @default(requested)
+  grossAmount       Decimal          @db.Decimal(10, 2) @map("gross_amount") // toplam komisyon
+  taxStatus         TaxStatus        @map("tax_status") // talep anındaki snapshot
+  withholdingRate   Decimal          @db.Decimal(4, 3) @map("withholding_rate") // snapshot
+  withholdingAmount Decimal          @db.Decimal(10, 2) @map("withholding_amount") // kesilen stopaj
+  netAmount         Decimal          @db.Decimal(10, 2) @map("net_amount") // gönderilen
+  ibanSnapshot      String?          @map("iban_snapshot")
+  holderSnapshot    String?          @map("holder_snapshot")
+  taxDocUrlSnapshot String?          @map("tax_doc_url_snapshot")
+  adminNote         String?          @map("admin_note")
+  rejectReason      String?          @map("reject_reason")
+  paymentRef        String?          @map("payment_ref") // payout sağlayıcı referansı (idempotensi)
+  // Mali müşavir vergi kaydı: gider pusulası (mükellef değil) / fatura no (mükellef).
+  taxRecorded       Boolean          @default(false) @map("tax_recorded")
+  taxDocumentNo     String?          @map("tax_document_no") // gider pusulası / fatura no
+  taxDocumentAt     DateTime?        @map("tax_document_at")
+  taxNote           String?          @map("tax_note")
+  requestedAt       DateTime         @default(now()) @map("requested_at")
+  approvedAt        DateTime?        @map("approved_at")
+  paidAt            DateTime?        @map("paid_at")
+  rejectedAt        DateTime?        @map("rejected_at")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  affiliate Affiliate        @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  items     WithdrawalItem[]
+
+  @@index([affiliateId])
+  @@index([status])
+  @@map("withdrawal_requests")
+}
+
+// Bir çekim talebinin kapsadığı tek komisyon (bir komisyon yalnız bir talepte).
+model WithdrawalItem {
+  id           String   @id @default(uuid()) @db.Uuid
+  withdrawalId String   @map("withdrawal_id") @db.Uuid
+  commissionId String   @unique @map("commission_id") @db.Uuid
+  amount       Decimal  @db.Decimal(10, 2) // komisyon tutarı (snapshot)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  withdrawal WithdrawalRequest @relation(fields: [withdrawalId], references: [id], onDelete: Cascade)
+  commission Commission        @relation(fields: [commissionId], references: [id], onDelete: Restrict)
+
+  @@index([withdrawalId])
+  @@map("withdrawal_items")
+}
+
+// Genel anahtar/değer ayarları (ör. mali müşavirin belirlediği stopaj oranı).
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+// ============================================================
+// QR LAZER ÜRETİCİSİ (qr_vendor) — kendi ürün/fiyatını yönetir; biz %10 alırız
+// ============================================================
+
+model QrVendor {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @unique @map("user_id") @db.Uuid
+  companyName String   @map("company_name")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products QrProduct[]
+  orders   QrOrder[]
+
+  @@map("qr_vendors")
+}
+
+model QrProduct {
+  id          String   @id @default(uuid()) @db.Uuid
+  vendorId    String   @map("vendor_id") @db.Uuid
+  name        String
+  description String?
+  price       Decimal  @db.Decimal(10, 2) // üretici belirler (TRY)
+  imageUrl    String?  @map("image_url")
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  vendor QrVendor  @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  orders QrOrder[]
+
+  @@index([vendorId])
+  @@map("qr_products")
+}
+
+model QrOrder {
+  id           String        @id @default(uuid()) @db.Uuid
+  vendorId     String        @map("vendor_id") @db.Uuid
+  productId    String        @map("product_id") @db.Uuid
+  buyerUserId  String        @map("buyer_user_id") @db.Uuid // sipariş veren sahip
+  qty          Int           @default(1)
+  unitPrice    Decimal       @db.Decimal(10, 2) @map("unit_price")
+  total        Decimal       @db.Decimal(10, 2)
+  platformFee  Decimal       @db.Decimal(10, 2) @map("platform_fee") // bizim %10
+  vendorPayout Decimal       @db.Decimal(10, 2) @map("vendor_payout") // üreticiye kalan
+  menuQrUrl    String?       @map("menu_qr_url") // kazınacak QR hedefi (sahibin menüsü)
+  shippingName String?       @map("shipping_name")
+  shippingPhone String?      @map("shipping_phone")
+  shippingAddress String?    @map("shipping_address")
+  status       QrOrderStatus @default(pending)
+  paymentRef   String?       @map("payment_ref") // İyzico referansı
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  vendor  QrVendor  @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  product QrProduct @relation(fields: [productId], references: [id], onDelete: Restrict)
+  buyer   User      @relation(fields: [buyerUserId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@index([buyerUserId])
+  @@map("qr_orders")
+}
+
+// ============================================================
+// ADİSYON (masa hesabı / hafif POS) — patron + çalışan (garson)
+// ============================================================
+
+// Çalışan (garson) profili: bir restorana bağlı, telefonla giriş yapar.
+model Staff {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @unique @map("user_id") @db.Uuid
+  restaurantId String   @map("restaurant_id") @db.Uuid
+  name         String?
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@map("staff")
+}
+
+// Masa (patron tanımlar). Adisyonlar masaya açılır.
+model RestaurantTable {
+  id           String   @id @default(uuid()) @db.Uuid
+  restaurantId String   @map("restaurant_id") @db.Uuid
+  name         String
+  sortOrder    Int      @default(0) @map("sort_order")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  adisyonlar Adisyon[]
+
+  @@index([restaurantId])
+  @@map("restaurant_tables")
+}
+
+// Adisyon: bir masanın açık hesabı. Kapanınca paid + ödeme türü + toplam.
+model Adisyon {
+  id            String         @id @default(uuid()) @db.Uuid
+  restaurantId  String         @map("restaurant_id") @db.Uuid
+  tableId       String?        @map("table_id") @db.Uuid
+  status        AdisyonStatus  @default(open)
+  total         Decimal        @default(0) @db.Decimal(10, 2)
+  paymentMethod PaymentMethod? @map("payment_method")
+  note          String?
+  openedById    String         @map("opened_by_id") @db.Uuid // açan kullanıcı (patron/garson)
+  closedById    String?        @map("closed_by_id") @db.Uuid
+  openedAt      DateTime       @default(now()) @map("opened_at")
+  closedAt      DateTime?      @map("closed_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  restaurant Restaurant       @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  table      RestaurantTable? @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  items      AdisyonItem[]
+
+  @@index([restaurantId])
+  @@index([status])
+  @@index([openedById])
+  @@map("adisyonlar")
+}
+
+// Adisyon kalemi: menüden eklenen ürün (ad/fiyat snapshot).
+model AdisyonItem {
+  id        String   @id @default(uuid()) @db.Uuid
+  adisyonId String   @map("adisyon_id") @db.Uuid
+  dishId    String?  @map("dish_id") @db.Uuid
+  name      String
+  unitPrice Decimal  @db.Decimal(10, 2) @map("unit_price")
+  qty       Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  adisyon Adisyon @relation(fields: [adisyonId], references: [id], onDelete: Cascade)
+
+  @@index([adisyonId])
+  @@map("adisyon_items")
+}
+
+// ============================================================
+// ÖZEL SOHBET (2 kişilik)
+// Erişim env `CHAT_MEMBER_IDS` (kullanıcı UUID'leri) ile kilitli; ürünün geri
+// kalanından tamamen bağımsız. Tek konuşma olduğu için Conversation tablosu yok.
+// ============================================================
+
+enum ChatKind {
+  text
+  voice
+}
+
+model ChatMessage {
+  id         String    @id @default(uuid()) @db.Uuid
+  senderId   String    @map("sender_id") @db.Uuid
+  kind       ChatKind  @default(text)
+  body       String? // metin mesajı
+  // Ses meta verisi (ham veri ChatAudio'da — liste sorgusu blob çekmesin diye ayrı).
+  audioMime  String?   @map("audio_mime")
+  audioSize  Int?      @map("audio_size")
+  durationMs Int?      @map("duration_ms")
+  readAt     DateTime? @map("read_at") // karşı taraf okuduğunda dolar
+  deletedAt  DateTime? @map("deleted_at") // yumuşak silme
+  createdAt  DateTime  @default(now()) @map("created_at")
+  // Tek monoton "değişim zamanı". Mutabakat sorgusu bununla sayfalanır:
+  // createdAt/readAt/deletedAt'in OR'u ile sayfalama yapılamaz (sıralama tek
+  // alana göre olduğu için kırpılan satırlar imlecin gerisinde kalıp KALICI
+  // olarak kaybolurdu).
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  sender User       @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  audio  ChatAudio?
+
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("chat_messages")
+}
+
+// Sesli mesajın ham verisi. Bilinçli olarak public/uploads'a YAZILMAZ (nginx orayı
+// herkese açık servis eder) → yalnızca kimlik doğrulamalı route stream eder.
+model ChatAudio {
+  messageId String @id @map("message_id") @db.Uuid
+  data      Bytes
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@map("chat_audio")
+}
