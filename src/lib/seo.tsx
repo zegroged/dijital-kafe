@@ -38,9 +38,7 @@ export const organizationLd = {
   telephone: toE164(COMPANY.phone),
   address: {
     "@type": "PostalAddress",
-    streetAddress: "[ADRES]",
-    addressLocality: "Selçuklu",
-    addressRegion: "Konya",
+    streetAddress: COMPANY.address,
     addressCountry: "TR",
   },
   areaServed: "TR",
