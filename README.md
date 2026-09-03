@@ -311,4 +311,4 @@ of the code and into environment variables before publication.
 
 AGPL-3.0 — see [LICENSE](LICENSE).
 
-This is a running commercial product, not a reference implementation. The AGPL is deliberate: anyone may read, learn from, and modify this code, but running a modified version as a network service requires publishing the source of that version. Copyright is held by the author, so separate commercial terms can be arranged on request.
+The AGPL is deliberate. This is not a teaching example written to be published; it is the code of a multi-tenant SaaS that ran in production for two pilot cafés, released afterwards so it can be read. Anyone may study, modify, and run it — but running a modified version as a network service means publishing the source of that version. Copyright is held by the author, so separate commercial terms can be arranged on request.
