@@ -11,7 +11,7 @@
 ![Prisma 7](https://img.shields.io/badge/Prisma-7-2D3748)
 ![Redis 7](https://img.shields.io/badge/Redis-7-DC382D)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED)
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow)
+![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue)
 
 ---
 
@@ -309,4 +309,6 @@ of the code and into environment variables before publication.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+AGPL-3.0 — see [LICENSE](LICENSE).
+
+This is a running commercial product, not a reference implementation. The AGPL is deliberate: anyone may read, learn from, and modify this code, but running a modified version as a network service requires publishing the source of that version. Copyright is held by the author, so separate commercial terms can be arranged on request.
