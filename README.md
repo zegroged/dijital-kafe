@@ -15,6 +15,8 @@
 
 ---
 
+**How this was built:** the code was written with AI assistance and reviewed by the author.
+
 ## Overview
 
 Small cafés and restaurants in Turkey switched to QR menus during the pandemic and mostly ended up

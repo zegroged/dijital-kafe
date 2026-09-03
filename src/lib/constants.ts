@@ -130,9 +130,12 @@ export const COMMISSION_RATE_BY_TYPE: Record<CommissionType, number> = {
   one_time: AFFILIATE_RATE_ONE_TIME,
   recurring: AFFILIATE_RATE_RECURRING,
 };
+// Etiketler oranlardan TURETILIR. Elle yazilirsa, bir ust satirda "depoda gercek
+// deger tutulmaz" denen sayilar tam da burada sizar (nitekim oyle olmustu).
+const yuzde = (kesir: number) => `%${Math.round(kesir * 100)}`;
 export const COMMISSION_TYPE_LABELS: Record<CommissionType, string> = {
-  one_time: "Tek seferlik %70",
-  recurring: "Devam eden %30",
+  one_time: `Tek seferlik ${yuzde(AFFILIATE_RATE_ONE_TIME)}`,
+  recurring: `Devam eden ${yuzde(AFFILIATE_RATE_RECURRING)}`,
 };
 
 // --- Çekim (withdrawal) + stopaj ---

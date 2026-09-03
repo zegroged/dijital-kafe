@@ -15,6 +15,8 @@
 
 ---
 
+**Nasıl yazıldı:** kod yapay zekâ yardımıyla yazıldı ve yazar tarafından gözden geçirildi.
+
 ## Genel bakış
 
 Türkiye'de küçük kafeler ve restoranlar pandemide QR menüye geçti ve çoğu, bir QR kodun arkasında duran bir PDF'le kaldı — fiyatı düzenlemenin yolu yok, marka yok, istatistik yok. Daha fazlasını yapan araçlar ise zincirlere göre fiyatlanmıştı. Dijital Kafe pazarın öteki ucu için yazıldı: sahibi kaydolur, bir kurulum sihirbazından geçer ve dakikalar içinde `kendi-adi.dijitalkafe.com` adresinden sunulan, temalı ve mobil öncelikli bir menüye artı yazdırılabilir bir QR koda sahip olur.
