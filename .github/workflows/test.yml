@@ -1,0 +1,26 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # Prisma istemcisi gitignore'da; tip kontrolunden once uretilmeli.
+      # Sema okunuyor, veritabanina baglanilmiyor.
+      - run: npx prisma generate
+      # Bu depoda otomatik test yok. Tip kontrolu en azindan derlenmeyen bir
+      # degisikligin sessizce main'e girmesini engelliyor.
+      - run: npx tsc --noEmit
+        env:
+          DATABASE_URL: postgresql://x:x@localhost:5432/x
