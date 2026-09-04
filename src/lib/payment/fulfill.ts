@@ -43,50 +43,45 @@ export async function fulfillPackage(
     const rate = Number(ref.affiliate.commissionRate);
     const amount = round2(price * rate);
 
+    const kazanc = {
+      affiliateId: ref.affiliateId,
+      referralId: ref.id,
+      plan,
+      amount,
+      status: "earned" as const,
+      paymentRef: paymentRef ?? null,
+      earnedAt: now,
+    };
+
+    // Referansı "dönüştü" olarak ATOMİK işaretle. updateMany + status koşulu,
+    // aynı satırı iki eşzamanlı çağrının birden kapamasını engeller: Postgres
+    // UPDATE için satır kilidi alıp koşulu yeniden değerlendirir, dolayısıyla
+    // count yalnızca birinde 1 döner. Aynı desen aşağıda fulfillQrOrder'da da var.
+    const ilkOdeme =
+      ref.status === "pending" &&
+      (
+        await tx.referral.updateMany({
+          where: { id: ref.id, status: "pending" },
+          data: { status: "earned", plan, earnedAt: now },
+        })
+      ).count === 1;
+
     if (ref.affiliate.commissionType === "one_time") {
-      // Sadece ilk ödemede bir kez.
-      const already = await tx.commission.count({ where: { referralId: ref.id } });
-      if (already === 0) {
-        await tx.commission.create({
-          data: {
-            affiliateId: ref.affiliateId,
-            referralId: ref.id,
-            plan,
-            amount,
-            status: "earned",
-            paymentRef: paymentRef ?? null,
-            earnedAt: now,
-          },
-        });
+      // Sadece ilk ödemede bir kez — ve "ilk" olan, referansı kapatmayı kazanan
+      // çağrıdır. Önce count() sonra create() yarış açıyordu: eşzamanlı iki
+      // callback de 0 görüp ikisi de kazanç yazabiliyordu.
+      if (ilkOdeme) {
+        await tx.commission.create({ data: kazanc });
       }
     } else {
-      // recurring: her ödeme bir kazanç. Aynı ödeme tekrar gelirse atla.
-      const dup = paymentRef
-        ? await tx.commission.count({
-            where: { referralId: ref.id, paymentRef },
-          })
-        : 0;
-      if (dup === 0) {
-        await tx.commission.create({
-          data: {
-            affiliateId: ref.affiliateId,
-            referralId: ref.id,
-            plan,
-            amount,
-            status: "earned",
-            paymentRef: paymentRef ?? null,
-            earnedAt: now,
-          },
-        });
-      }
-    }
-
-    // Referansı "dönüştü" olarak işaretle (ilk ödemede).
-    if (ref.status === "pending") {
-      await tx.referral.update({
-        where: { id: ref.id },
-        data: { status: "earned", plan, earnedAt: now },
-      });
+      // recurring: her ödeme bir kazanç, ama aynı ödeme iki kez bildirilirse
+      // bir kez. Tekilliği commissions(referral_id, payment_ref) benzersiz
+      // indeksi sağlıyor; skipDuplicates bunu ON CONFLICT DO NOTHING'e çevirir.
+      // Not: P2002'yi try/catch ile yakalamak burada İŞE YARAMAZ — Postgres'te
+      // hata alan işlem bütünüyle iptal olur, JS tarafında yakalamak kurtarmaz.
+      // payment_ref yoksa indeks devreye girmez (NULL'lar farklı sayılır) ve
+      // eski davranış korunur: her çağrı bir kazanç yazar.
+      await tx.commission.createMany({ data: [kazanc], skipDuplicates: true });
     }
   });
 }

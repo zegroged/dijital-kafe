@@ -381,6 +381,9 @@ model Commission {
   referral       Referral        @relation(fields: [referralId], references: [id], onDelete: Cascade)
   withdrawalItem WithdrawalItem?
 
+  // Ayni odeme iki kez bildirilirse ikinci kayit acilamaz. payment_ref NULL
+  // olan satirlar etkilenmez: Postgres'te NULL'lar birbirinden farkli sayilir.
+  @@unique([referralId, paymentRef])
   @@index([affiliateId])
   @@index([referralId])
   @@map("commissions")

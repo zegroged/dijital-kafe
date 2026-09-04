@@ -1,0 +1,23 @@
+-- Komisyonda kontrol-sonra-yaz yarisi.
+--
+-- fulfill.ts once count() sonra create() yapiyordu. Prisma'nin $transaction'i
+-- Postgres'te READ COMMITTED calisir: ayni anda gelen iki iyzico callback'inin
+-- ikisi de count=0 gorup ikisi de komisyon yazabiliyordu. Kontrolu veritabanina
+-- tasiyoruz.
+--
+-- payment_ref NULL olan satirlar etkilenmez -- Postgres'te NULL'lar birbirinden
+-- farkli sayildigi icin odeme referansi olmayan kayitlar eskisi gibi acilabilir.
+CREATE UNIQUE INDEX "commissions_referral_id_payment_ref_key" ON "commissions"("referral_id", "payment_ref");
+
+-- UYARI: bu indeks, hatanin ZATEN urettigi cift kayitlar varsa kurulmaz.
+-- deploy oncesi kontrol:
+--
+--   SELECT referral_id, payment_ref, COUNT(*)
+--   FROM commissions
+--   WHERE payment_ref IS NOT NULL
+--   GROUP BY referral_id, payment_ref
+--   HAVING COUNT(*) > 1;
+--
+-- Satir donerse once elle incelenmeli: her grup icin hangi kaydin gecerli
+-- oldugu (ve komisyoncuya fazla odeme yapilip yapilmadigi) is karari.
+-- Otomatik silme bilerek konmadi -- para kaydi.
