@@ -4,6 +4,7 @@
 
 **Live:** [dijitalkafe.com](https://dijitalkafe.com) · Turkish README: [README.tr.md](README.tr.md)
 
+[![tests](https://github.com/zegroged/dijital-kafe/actions/workflows/test.yml/badge.svg)](https://github.com/zegroged/dijital-kafe/actions/workflows/test.yml)
 ![Next.js 15](https://img.shields.io/badge/Next.js-15-000000)
 ![React 19](https://img.shields.io/badge/React-19-149ECA)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6)
